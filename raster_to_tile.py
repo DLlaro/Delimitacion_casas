@@ -149,19 +149,20 @@ def data_split(
     src = rasterio.open(ruta_TIF)
 
     print("Cargando geometrías...")
-    print("Geometria de : Casas")
+    
     gdf_casas_geoms = gpd.read_file(ruta_casas)
     gdf_casas_geoms = gdf_casas_geoms.to_crs(src.crs)
+    print("Geometria de : Casas")
 
-    print("Geometria de : Caminos")
+    
     gdf_caminos_geoms = gpd.read_file(ruta_caminos)
     gdf_caminos_geoms = gdf_caminos_geoms.to_crs(src.crs)
+    print("Geometria de : Caminos")
 
     if gpkg_area_excluida_path is not None:
-        print("Geometria de : Area fuera de interes")
         gdf_exclusion_geoms = gpd.read_file(ruta_area_excluida)
         gdf_exclusion_geoms = gdf_exclusion_geoms.to_crs(src.crs)
-
+        print("Geometria de : Area fuera de interes")
 
     print("Cargando tiles...")
     tiles = gpd.read_file(ruta_tiles)
@@ -187,7 +188,7 @@ def data_split(
     # =============================================================
     #  3. PROCESAR TILE POR TILE
     # =============================================================
-    idx = 0
+    i = 0
     tiles_usados= []
 
     for idx, tile in tiles.iterrows():
@@ -267,7 +268,7 @@ def data_split(
         for y in ys:
             for x in xs:
                 
-                patch_id = f"{ID_TIF}_{idx:06d}"
+                patch_id = f"{ID_TIF}_{i:06d}"
                 window = Window(x, y, PATCH_SIZE, PATCH_SIZE)
                 win_transform = rasterio.windows.transform(window, transform_tile)
 
@@ -382,7 +383,7 @@ def data_split(
                 ) as dst:
                     dst.write(mask_patch, 1)
 
-                idx += 1
+                i += 1
 
     if len(tiles_usados) > 0:
         gpd.GeoDataFrame(tiles_usados, crs=src.crs).to_file(

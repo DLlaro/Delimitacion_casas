@@ -27,7 +27,7 @@ def crear_tiles_con_validos(ruta_raster, n_rows=5, n_cols=5):
     for i in range(n_rows):
         for j in range(n_cols):
             tile_id = raster_id+"_"+str(idx)
-            
+
             r0, r1 = row_edges[i], row_edges[i+1]
             c0, c1 = col_edges[j], col_edges[j+1]
 
@@ -164,7 +164,7 @@ def generar_tiles_spatial_split(
     frac_test=0.10,
     shuffle_seed = 42
 ) -> None:
-
+    raster_id = ruta_raster.split("_")[-1].split(".")[0]
     tiles, crs = crear_tiles_con_validos(ruta_raster, n_rows, n_cols)
     tiles = estratificar_por_densidad(tiles)
     tiles, acc_val, acc_test, total_valid = asignar_splits(tiles, frac_val, frac_test, shuffle_seed)
@@ -177,4 +177,4 @@ def generar_tiles_spatial_split(
     print("Test asignado:", acc_test, f"({acc_test/total_valid*100:.1f}%)")
     print("Train:", total_valid - acc_val - acc_test)
 
-    gdf.to_file(filename=f"{out_dir}/division_en_tile.gpkg",driver='GPKG')
+    gdf.to_file(filename=f"{out_dir}/division_en_tile_{raster_id}.gpkg",driver='GPKG')

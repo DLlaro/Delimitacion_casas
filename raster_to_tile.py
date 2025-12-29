@@ -236,7 +236,7 @@ def data_split(
             )
 
         if gpkg_area_excluida_path is not None:
-            # ================= RASTERIZAR BUILDINGS DEL TILE =================
+            # ================= RASTERIZAR EXCLUSION DEL TILE =================
             exclude_tile = np.zeros((tile_h, tile_w), dtype="uint8")
 
             if not geoms_exclusion.empty:

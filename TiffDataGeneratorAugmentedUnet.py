@@ -60,64 +60,48 @@ class TIFFDataGeneratorAug(tf.keras.utils.Sequence):
             np.random.shuffle(self.indexes)
 
     def __getitem__(self, idx):
-
         batch_indexes = self.indexes[idx*self.batch_size:(idx+1)*self.batch_size]
-        batch_imgs, batch_masks = [], []
+        bs = len(batch_indexes)
+        H, W = self.target_size
 
-        for i in batch_indexes:
+        X = np.empty((bs, H, W, self.n_channels), dtype=np.float32)
+        y = np.empty((bs, H, W, 1), dtype=np.int32)
 
-            # -------- LEER IMAGEN --------
+        for j, i in enumerate(batch_indexes):
+
             with rasterio.open(self.image_paths[i]) as src:
-                img = src.read()  # (C, H, W)
-                img = np.transpose(img, (1, 2, 0))  # (H, W, C)
+                img = src.read(
+                    out_shape=(src.count, H, W),
+                    resampling=rasterio.enums.Resampling.bilinear
+                )
+                img = np.transpose(img, (1, 2, 0))
 
-            # -------- LEER MÁSCARA --------
             with rasterio.open(self.mask_paths[i]) as src:
-                mask = src.read(1)
+                mask = src.read(
+                    1,
+                    out_shape=(H, W),
+                    resampling=rasterio.enums.Resampling.nearest
+                )
 
-                mask_mc = np.full_like(mask, 255, dtype=np.uint8)
-                # opcional: ignorar nodata
-                mask_mc[mask == BACKGROUND] = 0
-                mask_mc[mask == ROAD] = 1
-                mask_mc[mask == BUILDING] = 2 
+            mask_mc = np.full_like(mask, 255, dtype=np.int32)
+            mask_mc[mask == BACKGROUND] = 0
+            mask_mc[mask == ROAD] = 1
+            mask_mc[mask == BUILDING] = 2
 
             img = img.astype(np.float32)
-            #Reasignacion de mask (entero ya que es multiclase)
-            mask = mask_mc.astype(np.uint8)
 
-            # -------- AJUSTE DEL NÚMERO DE CANALES --------
-            if img.shape[-1] > self.n_channels:
-                img = img[..., :self.n_channels]
-            elif img.shape[-1] < self.n_channels:
-                img = np.concatenate([img] * (self.n_channels // img.shape[-1] + 1), axis=-1)
+            if img.shape[-1] != self.n_channels:
                 img = img[..., :self.n_channels]
 
-            # -------- REDIMENSIONAR --------
-            if img.shape[:2] != self.target_size:
-                img = cv2.resize(img, self.target_size, interpolation=cv2.INTER_LINEAR)
-            if mask.shape[:2] != self.target_size:
-                mask = cv2.resize(mask, self.target_size, interpolation=cv2.INTER_NEAREST)
-
-            # -------- APLICAR DATA AUGMENTATION --------
             if self.augment:
-                augmented = self.augmentation(image=img, mask=mask)
+                augmented = self.augmentation(image=img, mask=mask_mc)
                 img = augmented["image"]
-                mask = augmented["mask"]
+                mask_mc = augmented["mask"]
 
-            # -------- NORMALIZACIÓN --------
-            if self.normalize == 'imagenet':
-                # Normalización ImageNet
-                img = img / 255.0  # Escalar a [0, 1]
-                img = (img - IMAGENET_MEAN) / IMAGENET_STD
+            img *= (1.0 / 255.0)
+            img = (img - IMAGENET_MEAN) / IMAGENET_STD
 
-            # -------- FORMATO FINAL DE LA MÁSCARA --------
-            mask = np.expand_dims(mask, axis=-1)
+            X[j] = img
+            y[j, ..., 0] = mask_mc
 
-            batch_imgs.append(img)
-            batch_masks.append(mask)
-
-        X = np.stack(batch_imgs, axis=0)
-        y = np.stack(batch_masks, axis=0)
-
-        print(X.shape)  # DEBUG
         return X, y

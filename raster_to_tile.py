@@ -96,7 +96,7 @@ def data_split(
             gpkg_area_excluida_path (str): Ruta de capa vectorial de area que se desea excluir al realizar los parches (.gpkg)
     """
 
-    np.random.seed = semilla
+    np.random.seed(semilla)
     # =============================================================
     #  1. CONFIGURACIÓN
     # =============================================================
@@ -395,4 +395,4 @@ def data_split(
         tiles_usados = []
 
     print("\n LISTO: Dataset generado correctamente.")
-    print(f"Total de parches generados: {patch_id}")
+    print(f"Total de parches generados: {i}")

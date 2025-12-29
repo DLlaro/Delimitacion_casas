@@ -92,7 +92,7 @@ def vecinos(tile, tiles):
 # 4. Algoritmo final de asignación
 # ----------------------------------------------------
 def asignar_splits(tiles, frac_val=0.20, frac_test=0.10, random_seed = 42):
-    random.seed = random_seed
+    random.seed(random_seed)
 
     total_valid = sum(t["valid_px"] for t in tiles)
     objetivo_val = frac_val * total_valid

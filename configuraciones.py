@@ -27,15 +27,21 @@ def masked_sparse_cce(y_true, y_pred):
     return tf.reduce_sum(loss) / num_valid
 
 
-class MaskedIoUPerClass(tf.keras.metrics.Metric):
-    def __init__(self, num_classes=3, class_names=None, name='masked_iou_per_class', **kwargs):
+class MeanIoUPerClass(tf.keras.metrics.Metric):
+    """
+    Métrica de Mean Intersection over Union que:
+    - Ignora píxeles con label 255
+    - Calcula IoU por clase y promedio
+    - Mantiene matriz de confusión acumulativa
+    """
+    def __init__(self, num_classes, class_names=None, name='miou', **kwargs):
         super().__init__(name=name, **kwargs)
         self.num_classes = num_classes
-        self.class_names = class_names or [f'class_{i}' for i in range(num_classes)]
+        self.class_names = class_names or [f"Clase_{i}" for i in range(num_classes)]
         
-        # Matriz de confusión acumulativa
-        self.total_cm = self.add_weight(
-            name='total_confusion_matrix',
+        # Matriz de confusión: confusion_matrix[true_class, pred_class]
+        self.confusion_matrix = self.add_weight(
+            name='confusion_matrix',
             shape=(num_classes, num_classes),
             initializer='zeros',
             dtype=tf.float32
@@ -45,56 +51,62 @@ class MaskedIoUPerClass(tf.keras.metrics.Metric):
         y_true = tf.squeeze(y_true, axis=-1)
         y_pred = tf.argmax(y_pred, axis=-1)
         
-        # Convertir a int32
         y_true = tf.cast(y_true, tf.int32)
         y_pred = tf.cast(y_pred, tf.int32)
         
         # Máscara para ignorar 255
         mask = tf.not_equal(y_true, 255)
+        y_true_masked = tf.boolean_mask(y_true, mask)
+        y_pred_masked = tf.boolean_mask(y_pred, mask)
         
-        # Aplicar máscara
-        y_true = tf.boolean_mask(y_true, mask)
-        y_pred = tf.boolean_mask(y_pred, mask)
+        # Actualizar matriz de confusión usando índices planos
+        indices = y_true_masked * self.num_classes + y_pred_masked
         
-        # Calcular confusion matrix
-        current_cm = tf.math.confusion_matrix(
-            y_true,
-            y_pred,
-            num_classes=self.num_classes,
-            dtype=tf.float32
+        updates = tf.ones_like(indices, dtype=tf.float32)
+        flat_confusion = tf.math.unsorted_segment_sum(
+            updates,
+            indices,
+            num_segments=self.num_classes * self.num_classes
         )
         
-        self.total_cm.assign_add(current_cm)
+        confusion_batch = tf.reshape(flat_confusion, (self.num_classes, self.num_classes))
+        self.confusion_matrix.assign_add(confusion_batch)
     
     def result(self):
-        """Retorna el mIoU promedio (para compatibilidad con callbacks)"""
-        iou_per_class = self._compute_iou_per_class()
-        return tf.reduce_mean(iou_per_class)
-    
-    def _compute_iou_per_class(self):
-        """Calcula IoU para cada clase"""
-        sum_over_row = tf.reduce_sum(self.total_cm, axis=0)  # Predicciones
-        sum_over_col = tf.reduce_sum(self.total_cm, axis=1)  # Ground truth
-        diag = tf.linalg.diag_part(self.total_cm)  # True positives
+        """
+        Retorna Mean IoU promediado solo sobre clases presentes en el dataset
+        """
+        tp = tf.linalg.diag_part(self.confusion_matrix)
+        fp = tf.reduce_sum(self.confusion_matrix, axis=0) - tp
+        fn = tf.reduce_sum(self.confusion_matrix, axis=1) - tp
         
-        # IoU = TP / (TP + FP + FN)
-        denominator = sum_over_row + sum_over_col - diag
+        iou = tp / (tp + fp + fn + 1e-7)
         
-        iou = tf.where(
-            denominator > 0,
-            diag / denominator,
-            0.0
-        )
+        # Promediar solo sobre clases que tienen píxeles en ground truth
+        valid_classes = tf.cast(tp + fn > 0, tf.float32)
         
-        return iou
+        # Sumar IoUs de clases válidas y dividir por número de clases válidas
+        sum_valid_iou = tf.reduce_sum(iou * valid_classes)
+        num_valid_classes = tf.maximum(tf.reduce_sum(valid_classes), 1.0)
+        
+        return sum_valid_iou / num_valid_classes
     
     def get_iou_per_class(self):
-        """Método para obtener IoU por clase (usar después del entrenamiento)"""
-        iou = self._compute_iou_per_class()
-        return {self.class_names[i]: float(iou[i].numpy()) for i in range(self.num_classes)}
+        """Retorna diccionario con IoU por clase"""
+        tp = tf.linalg.diag_part(self.confusion_matrix)
+        fp = tf.reduce_sum(self.confusion_matrix, axis=0) - tp
+        fn = tf.reduce_sum(self.confusion_matrix, axis=1) - tp
+        
+        iou = tp / (tp + fp + fn + 1e-7)
+        iou_numpy = iou.numpy()
+        
+        return {
+            self.class_names[i]: float(iou_numpy[i])
+            for i in range(self.num_classes)
+        }
     
     def reset_state(self):
-        self.total_cm.assign(tf.zeros_like(self.total_cm))
+        self.confusion_matrix.assign(tf.zeros((self.num_classes, self.num_classes)))
 
 
 class MaskedSparseCategoricalAccuracy(tf.keras.metrics.Metric):
@@ -141,43 +153,46 @@ class MaskedSparseCategoricalAccuracy(tf.keras.metrics.Metric):
         self.total_correct.assign_add(tf.reduce_sum(correct))
         self.total_pixels.assign_add(tf.cast(tf.size(y_true_masked), tf.float32))
         
-        # Accuracy por clase
-        for class_id in range(self.num_classes):
-            # Máscara para la clase actual
-            class_mask = tf.equal(y_true_masked, class_id)
-            
-            if tf.reduce_any(class_mask):
-                y_true_class = tf.boolean_mask(y_true_masked, class_mask)
-                y_pred_class = tf.boolean_mask(y_pred_masked, class_mask)
-                
-                correct_class = tf.cast(tf.equal(y_true_class, y_pred_class), tf.float32)
-                
-                # Actualizar acumuladores
-                self.correct_per_class.scatter_add(
-                    tf.IndexedSlices(tf.reduce_sum(correct_class), [class_id])
-                )
-                self.pixels_per_class.scatter_add(
-                    tf.IndexedSlices(tf.cast(tf.size(y_true_class), tf.float32), [class_id])
-                )
+        # Accuracy por clase (vectorizado)
+        correct_indicator = tf.cast(tf.equal(y_true_masked, y_pred_masked), tf.float32)
+        
+        # Sumar correctos por clase usando unsorted_segment_sum
+        correct_per_class_batch = tf.math.unsorted_segment_sum(
+            correct_indicator,
+            y_true_masked,
+            num_segments=self.num_classes
+        )
+        
+        # Contar píxeles por clase
+        ones = tf.ones_like(y_true_masked, dtype=tf.float32)
+        pixels_per_class_batch = tf.math.unsorted_segment_sum(
+            ones,
+            y_true_masked,
+            num_segments=self.num_classes
+        )
+        
+        # Actualizar variables
+        self.correct_per_class.assign_add(correct_per_class_batch)
+        self.pixels_per_class.assign_add(pixels_per_class_batch)
     
     def result(self):
-        """Retorna accuracy global (para compatibilidad con callbacks)"""
-        return self.total_correct / tf.maximum(self.total_pixels, 1.0)
+        """Retorna accuracy global (para Keras)"""
+        return self.total_correct / (self.total_pixels + 1e-7)
     
     def get_accuracy_per_class(self):
-        """Obtiene accuracy por clase"""
-        acc_per_class = tf.where(
-            self.pixels_per_class > 0,
-            self.correct_per_class / self.pixels_per_class,
-            0.0
-        )
-        return {self.class_names[i]: float(acc_per_class[i].numpy()) for i in range(self.num_classes)}
+        """Retorna diccionario con accuracy por clase (para callback)"""
+        class_acc = self.correct_per_class / (self.pixels_per_class + 1e-7)
+        return {
+            self.class_names[i]: float(class_acc[i].numpy())
+            for i in range(self.num_classes)
+        }
     
     def reset_state(self):
+        """Reinicia todos los acumuladores"""
         self.total_correct.assign(0.0)
         self.total_pixels.assign(0.0)
-        self.correct_per_class.assign(tf.zeros((self.num_classes,)))
-        self.pixels_per_class.assign(tf.zeros((self.num_classes,)))
+        self.correct_per_class.assign(tf.zeros((self.num_classes,), dtype=tf.float32))
+        self.pixels_per_class.assign(tf.zeros((self.num_classes,), dtype=tf.float32))
 
 class PrintMetricsPerClass(tf.keras.callbacks.Callback):
     def __init__(self, metric_names=['acc', 'miou']):
@@ -185,7 +200,7 @@ class PrintMetricsPerClass(tf.keras.callbacks.Callback):
         self.metric_names = metric_names
     
     def on_epoch_end(self, epoch, logs=None):
-        print(f"\n📊 Época {epoch+1} - Métricas por clase:")
+        print(f"\nÉpoca {epoch+1} - Métricas por clase:")
         
         for metric in self.model.metrics:
             if metric.name in self.metric_names:

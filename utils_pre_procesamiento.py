@@ -8,6 +8,9 @@ import random
 # 1. Dividir raster en tiles y contar píxeles válidos
 # ----------------------------------------------------
 def crear_tiles_con_validos(ruta_raster, n_rows=5, n_cols=5):
+
+    raster_id = ruta_raster.split("_")[-1].split(".")[0]
+
     with rasterio.open(ruta_raster) as src:
         mask = src.dataset_mask() > 0  # True en píxeles válidos
         height, width = mask.shape
@@ -18,10 +21,13 @@ def crear_tiles_con_validos(ruta_raster, n_rows=5, n_cols=5):
     col_edges = np.linspace(0, width, n_cols + 1, dtype=int)
 
     tiles = []
-    tile_id = 1
+    idx = 1
+
 
     for i in range(n_rows):
         for j in range(n_cols):
+            tile_id = raster_id+"_"+str(idx)
+            
             r0, r1 = row_edges[i], row_edges[i+1]
             c0, c1 = col_edges[j], col_edges[j+1]
 
@@ -39,7 +45,7 @@ def crear_tiles_con_validos(ruta_raster, n_rows=5, n_cols=5):
                 "split": "train",
                 "geometry": poly,
             })
-            tile_id += 1
+            idx += 1
 
     return tiles, crs
 

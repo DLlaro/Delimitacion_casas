@@ -102,6 +102,9 @@ def data_split(
     # =============================================================
     ruta_TIF = tif_path
 
+    ##Identificador de tif
+    ID_TIF = ruta_TIF.split("_")[-1].split(".")[0]
+
     # GEOMETRÍAS CASAS
     ruta_casas = gpkg_casas_path
 
@@ -169,7 +172,7 @@ def data_split(
 
     #Crea gpkg de tiles
 
-    out_gpkg = f"{out_dir_path}/tiles_debug.gpkg"
+    out_gpkg = f"{out_dir_path}/tiles_debug_{ID_TIF}.gpkg"
     layer_name = "tiles"
     # crear GPKG vacío solo una vez
     if not os.path.exists(out_gpkg):
@@ -184,7 +187,7 @@ def data_split(
     # =============================================================
     #  3. PROCESAR TILE POR TILE
     # =============================================================
-    patch_id = 0
+    idx = 0
     tiles_usados= []
 
     for idx, tile in tiles.iterrows():
@@ -263,7 +266,8 @@ def data_split(
 
         for y in ys:
             for x in xs:
-
+                
+                patch_id = f"{ID_TIF}_{idx:06d}"
                 window = Window(x, y, PATCH_SIZE, PATCH_SIZE)
                 win_transform = rasterio.windows.transform(window, transform_tile)
 
@@ -282,7 +286,7 @@ def data_split(
                     # ejemplo: excluir si >30% del patch
                     
                     if np.mean(exclude_patch == EXCLUDE) > 0.3:
-                        print("Se excluyo el tile: "+ str(patch_id))
+                        #print("Se excluyo el tile: "+ patch_id) #debug
                         continue
 
                 # Mascara base
@@ -316,8 +320,8 @@ def data_split(
                         continue
 
                 # ---- Guardar TIFF georreferenciado ----
-                out_img = os.path.join(carpeta_salida, split, "images", f"img_{patch_id:06d}.tif")
-                out_mask = os.path.join(carpeta_salida, split, "masks", f"mask_{patch_id:06d}.tif")
+                out_img = os.path.join(carpeta_salida, split, "images", f"img_{patch_id}.tif")
+                out_mask = os.path.join(carpeta_salida, split, "masks", f"mask_{patch_id}.tif")
 
                 # Codigo para visualizar las imagenes en rgb realizando normalizado
                 # Normalizar imagen a 0-255 si es necesario
@@ -333,8 +337,8 @@ def data_split(
 
                 # Guardamos datos del tile procesado
                 tiles_usados.append({
-                    "tile_id": int(tile["tile_id"]),
-                    "patch_id": int(patch_id),
+                    "tile_id": tile["tile_id"],
+                    "patch_id": patch_id,
                     "split": split,
                     "geometry": patch_geom
                 })
@@ -378,7 +382,7 @@ def data_split(
                 ) as dst:
                     dst.write(mask_patch, 1)
 
-                patch_id += 1
+                idx += 1
 
     if len(tiles_usados) > 0:
         gpd.GeoDataFrame(tiles_usados, crs=src.crs).to_file(

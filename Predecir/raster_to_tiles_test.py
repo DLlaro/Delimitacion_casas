@@ -10,64 +10,86 @@ from rasterio.transform import xy
 import geopandas as gpd
 
 
-def compute_global_percentiles_stream(tif_path: str, pmin=2, pmax=98, bands=[1,2,3], nbins=10000):
+def compute_global_percentiles_stream_per_band(tif_path: str, pmin=2, pmax=98, bands=[1,2,3], nbins=10000):
     with rasterio.open(tif_path) as src:
         h, w = src.height, src.width
         nodata = src.nodata
         block_size = 1024
-
-        # Estimar global min y max por streaming
-        global_min, global_max = np.inf, -np.inf
+        n_bands = len(bands)
+        
+        # Min/max por banda
+        global_min = np.full(n_bands, np.inf)
+        global_max = np.full(n_bands, -np.inf)
+        
+        for y in range(0, h, block_size):
+            for x in range(0, w, block_size):
+                win = Window(x, y, min(block_size, w-x), min(block_size, h-y))
+                block = src.read(bands, window=win).astype(np.float32)  # shape: (n_bands, rows, cols)
+                
+                for b in range(n_bands):
+                    band_data = block[b]
+                    if nodata is not None:
+                        valid_values = band_data[band_data != nodata]
+                    else:
+                        valid_values = band_data.flatten()
+                    
+                    if valid_values.size > 0:
+                        global_min[b] = min(global_min[b], valid_values.min())
+                        global_max[b] = max(global_max[b], valid_values.max())
+        
+        # Histograma por banda
+        hist = np.zeros((n_bands, nbins), dtype=np.int64)
+        bin_edges = [np.linspace(global_min[b], global_max[b], nbins+1) for b in range(n_bands)]
+        
         for y in range(0, h, block_size):
             for x in range(0, w, block_size):
                 win = Window(x, y, min(block_size, w-x), min(block_size, h-y))
                 block = src.read(bands, window=win).astype(np.float32)
-                if nodata is not None:
-                    mask = block != nodata
-                    valid_values = block[mask]
-                else:
-                    valid_values = block.flatten()
-                if valid_values.size > 0:
-                    global_min = min(global_min, valid_values.min())
-                    global_max = max(global_max, valid_values.max())
-
-        # Crear histograma acumulativo
-        hist = np.zeros(nbins, dtype=np.int64)
-        bin_edges = np.linspace(global_min, global_max, nbins+1)
+                
+                for b in range(n_bands):
+                    band_data = block[b]
+                    if nodata is not None:
+                        values = band_data[band_data != nodata]
+                    else:
+                        values = band_data.flatten()
+                    
+                    hist_block, _ = np.histogram(values, bins=bin_edges[b])
+                    hist[b] += hist_block
         
-        # Segundo pase para llenar histograma
-        for y in range(0, h, block_size):
-            for x in range(0, w, block_size):
-                win = Window(x, y, min(block_size, w-x), min(block_size, h-y))
-                block = src.read(bands, window=win).astype(np.float32)
-                if nodata is not None:
-                    mask = block != nodata
-                    values = block[mask]
-                else:
-                    values = block.flatten()
-                hist_block, _ = np.histogram(values, bins=bin_edges)
-                hist += hist_block
+        # Percentiles por banda
+        lo = np.zeros(n_bands)
+        hi = np.zeros(n_bands)
         
-        # Percentiles globales
-        cdf = np.cumsum(hist)
-        cdf = cdf / cdf[-1]
-        def percentile_from_cdf(p):
-            idx = np.searchsorted(cdf, p/100)
-            return bin_edges[min(idx, len(bin_edges)-1)]
-        lo = percentile_from_cdf(pmin)
-        hi = percentile_from_cdf(pmax)
+        for b in range(n_bands):
+            cdf = np.cumsum(hist[b])
+            cdf = cdf / cdf[-1]
+            idx_lo = np.searchsorted(cdf, pmin/100)
+            idx_hi = np.searchsorted(cdf, pmax/100)
+            lo[b] = bin_edges[b][min(idx_lo, len(bin_edges[b])-1)]
+            hi[b] = bin_edges[b][min(idx_hi, len(bin_edges[b])-1)]
     
-    return lo, hi
+    return lo, hi  # Ahora son arrays de n_bands elementos
 
-def normalize_percentiles(x: np.ndarray, lo: float, hi: float, nodata_value=None):
+def normalize_percentiles_per_band(x: np.ndarray, lo: np.ndarray, hi: np.ndarray, nodata_value=None):
+    """x shape: (height, width, n_bands)"""
     x = x.astype(np.float32)
+    x_norm = np.zeros_like(x)
+    
+    for b in range(x.shape[-1]):
+        band = x[..., b]
+        if nodata_value is not None:
+            valid = band != nodata_value
+            x_norm[valid, b] = np.clip((band[valid] - lo[b]) / (hi[b] - lo[b] + 1e-6), 0, 1)
+        else:
+            x_norm[..., b] = np.clip((band - lo[b]) / (hi[b] - lo[b] + 1e-6), 0, 1)
+    
+    out = (x_norm * 255).astype(np.uint8)
+    
     if nodata_value is not None:
-        mask = x != nodata_value
-        x_norm = np.zeros_like(x)
-        x_norm[mask] = np.clip((x[mask] - lo) / (hi - lo + 1e-6), 0, 1)
-    else:
-        x_norm = np.clip((x - lo) / (hi - lo + 1e-6), 0, 1)
-    return (x_norm * 255).astype(np.uint8)
+        valid_mask = np.all(x != nodata_value, axis=-1)
+        out[~valid_mask] = 0
+    
+    return out
 
 def tile_geotiff(
     tif_path: str,
@@ -80,7 +102,7 @@ def tile_geotiff(
     os.makedirs(out_dir, exist_ok=True)
 
     # Calcular percentiles globales
-    lo, hi = compute_global_percentiles_stream(tif_path)
+    lo, hi = compute_global_percentiles_stream_per_band(tif_path)
 
     with rasterio.open(tif_path) as src:
         W, H = src.width, src.height
@@ -124,12 +146,12 @@ def tile_geotiff(
                 else:
                     raise ValueError("TIF must have at least 3 bands (RGB).")
 
-                tile_rgb_8bit = normalize_percentiles(tile_rgb, lo, hi, nodata_value)
+                tile_rgb_8bit = normalize_percentiles_per_band(tile_rgb, lo, hi, nodata_value)
 
                 # Detectar tiles negros
                 mean_intensity = np.mean(tile_rgb_8bit)
                 if mean_intensity < black_tile_threshold:
-                    print(f"Skipping tile_{tile_id} at ({x},{y}). Mean intensity {mean_intensity:.2f} < {black_tile_threshold}")
+                    #print(f"Skipping tile_{tile_id} at ({x},{y}). Mean intensity {mean_intensity:.2f} < {black_tile_threshold}")
                     continue
                 
                 tile_transform = window_transform(window, src.transform)

@@ -4,7 +4,8 @@ import cv2
 import os
 from glob import glob
 from tqdm import tqdm
-
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 def predict_tiles(input_dir, output_dir, model, threshold=0.5):
     """
     Predice máscaras binarias para todos los tiles TIF en una carpeta.
@@ -44,6 +45,7 @@ def predict_tiles(input_dir, output_dir, model, threshold=0.5):
             # Preparar imagen para predicción
             img_rgb = img[..., :3] 
             img_rgb = img_rgb.astype("float32") / 255.0
+            img_rgb = (img_rgb - IMAGENET_MEAN) / IMAGENET_STD
             img_ready = np.expand_dims(img_rgb, axis=0)
             
             # Predecir

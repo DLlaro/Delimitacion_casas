@@ -169,7 +169,11 @@ class PrintMetricsPerClass(tf.keras.callbacks.Callback):
         print(f"Época {epoch + 1} - Métricas por clase")
         print(f"{'='*60}")
 
-        metrics = self.model.metrics
+        # Extraer métricas reales del contenedor
+        metrics = []
+        for m in self.model.metrics:
+            if hasattr(m, "metrics"):   # compile_metrics
+                metrics.extend(m.metrics)
 
         found_any = False
         for metric in metrics:

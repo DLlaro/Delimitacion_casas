@@ -118,7 +118,7 @@ def stitch_tiles_by_class(tiles_dir, pred_dir, output_dir, num_classes=3, test=F
 
     # Guardar cada clase por separado
     os.makedirs(output_dir, exist_ok=True)
-    for c in range(num_classes):
+    for c in range(1,num_classes):
         out_path = os.path.join(output_dir, f"class_{c}.tif")
         with rasterio.open(
             out_path, "w",

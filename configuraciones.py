@@ -160,63 +160,38 @@ class MaskedSparseCategoricalAccuracy(tf.keras.metrics.Metric):
 
 
 class PrintMetricsPerClass(tf.keras.callbacks.Callback):
-    def __init__(self, metric_names=['acc', 'miou']):
+    def __init__(self, metric_names=('acc', 'miou')):
         super().__init__()
         self.metric_names = metric_names
-    
+
     def on_epoch_end(self, epoch, logs=None):
         print(f"\n{'='*60}")
-        print(f"Época {epoch+1} - Métricas por clase")
+        print(f"Época {epoch + 1} - Métricas por clase")
         print(f"{'='*60}")
-        
-        # Obtener lista de métricas
-        all_metrics = []
-        
-        if hasattr(self.model, 'compiled_metrics') and self.model.compiled_metrics is not None:
-            if hasattr(self.model.compiled_metrics, '_metrics'):
-                all_metrics = self.model.compiled_metrics._metrics
-        
-        # También buscar en model.metrics
-        if hasattr(self.model, 'metrics') and self.model.metrics is not None:
-            all_metrics.extend(self.model.metrics)
-        
-        # Verificar que tengamos métricas
-        if not all_metrics:
-            print("  ⚠️ No se encontraron métricas")
-            print(f"{'='*60}\n")
-            return
-        
-        # Iterar sobre cada métrica
+
+        metrics = self.model.metrics
+
         found_any = False
-        for metric in all_metrics:
-            # Verificar que metric tenga atributo name
-            if not hasattr(metric, 'name'):
+        for metric in metrics:
+            if metric.name not in self.metric_names:
                 continue
-                
-            if metric.name in self.metric_names:
-                found_any = True
-                
-                if hasattr(metric, 'get_accuracy_per_class'):
-                    try:
-                        results = metric.get_accuracy_per_class()
-                        print(f"\n  📊 Accuracy por clase:")
-                        for class_name, value in results.items():
-                            print(f"    {class_name}: {value:.4f} ({value*100:.2f}%)")
-                    except Exception as e:
-                        print(f"  ⚠️ Error obteniendo accuracy: {e}")
-                
-                if hasattr(metric, 'get_iou_per_class'):
-                    try:
-                        results = metric.get_iou_per_class()
-                        print(f"\n  📊 IoU por clase:")
-                        for class_name, value in results.items():
-                            print(f"    {class_name}: {value:.4f} ({value*100:.2f}%)")
-                    except Exception as e:
-                        print(f"  ⚠️ Error obteniendo IoU: {e}")
-        
+
+            found_any = True
+
+            if hasattr(metric, 'get_accuracy_per_class'):
+                results = metric.get_accuracy_per_class()
+                print("\n Accuracy por clase:")
+                for k, v in results.items():
+                    print(f"    {k}: {v:.4f} ({v*100:.2f}%)")
+
+            if hasattr(metric, 'get_iou_per_class'):
+                results = metric.get_iou_per_class()
+                print("\n IoU por clase:")
+                for k, v in results.items():
+                    print(f"    {k}: {v:.4f} ({v*100:.2f}%)")
+
         if not found_any:
-            print(f"  ⚠️ No se encontraron métricas con nombres: {self.metric_names}")
-            available_names = [m.name for m in all_metrics if hasattr(m, 'name')]
-            print(f"  Métricas disponibles: {available_names}")
-        
+            print(" No se encontraron métricas solicitadas")
+            print("  Métricas disponibles:", [m.name for m in metrics])
+
         print(f"{'='*60}\n")
